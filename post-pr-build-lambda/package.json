@@ -1,0 +1,15 @@
+{
+  "name": "post-pr-build-lambda",
+  "version": "1.0.0",
+  "description": "Lambda to trigger codebuild on git pull-request webhook",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@actions/github": "^4.0.0",
+    "aws-sdk": "^2.833.0"
+  }
+}

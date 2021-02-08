@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  PostBuildTriggerLamda:
+    Description: Name of the lambda to trigger post codebuild
+    Type: String
+    Default: "post-pr-build-lambda"
+Mappings:
+  EnvKeys:
+    Dev:
+      "CloudwatchEventRole": "arn:aws:iam::xxxxxxxxxxxx:role/CloudwatchEvent-Role"
+      "CodeBuildRole": "arn:aws:iam::xxxxxxxxxxxx:role/Codebuild-role"
+Resources:
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref AWS::StackName
+      Description: !Ref AWS::StackName
+      ServiceRole: !FindInMap [EnvKeys, Dev, CodeBuildRole]
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: linuxContainer
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:4.0
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                nodejs: 10
+              commands:
+                - aws secretsmanager get-secret-value --secret-id git-oauth-token >> oAuthToken.json
+                - cat oAuthToken.json | jq -r '.SecretString' >> secretString.json
+                - githubToken="$(cat secretString.json | jq '.GitPAT' | tr -d '"')"
+                - git config --global credential.helper store
+                - echo "https://git:${githubToken}@github.com" >> ~/.git-credentials
+                - npm install -g ember-cli
+            build: 
+              commands: 
+                - git clone -b $BRANCH https://github.com/tamdilip/$REPO.git
+                - cd $REPO
+                - npm install
+                - COVERAGE=true ember test -r xunit --silent > junit.xml
+              finally:
+                - rm -f ~/.git-credentials
+          reports:
+            ${REPO}-test-reports:
+              files:
+                - '*/junit.xml'
+              file-format: 'JUNITXML'
+            ${REPO}-coverage-reports:
+              files:
+                - '*/coverage/*'
+              file-format: 'COBERTURAXML'
+      TimeoutInMinutes: 15
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Trigger lambda on codebuild state changes"
+      Name: !Ref AWS::StackName
+      State: "ENABLED"
+      EventPattern:
+        source:
+          - aws.codebuild
+        detail-type:
+          - CodeBuild Build State Change
+        resources:
+          - Fn::Join:
+              - ":"
+              - - "arn:aws:codebuild"
+                - !Ref AWS::Region
+                - !Ref AWS::AccountId
+                - !Sub "project/${BuildProject}"
+        detail:
+          buildStatus:
+            - FAILED
+            - STOPPED
+          projectName:
+            - !Ref AWS::StackName
+      Targets:
+        - Arn:
+            Fn::Join:
+              - ":"
+              - - "arn:aws:lambda"
+                - !Ref AWS::Region
+                - !Ref AWS::AccountId
+                - "function"
+                - !Ref PostBuildTriggerLamda
+          Id: !Ref AWS::StackName
+          RoleArn: !FindInMap [EnvKeys, Dev, CloudwatchEventRole]
